@@ -1,11 +1,11 @@
-from typing import List, Tuple
-import warnings
+import os.path
+import subprocess
+import tempfile
+from typing import List, Tuple, Union
 
 import librosa
 import nltk
 import numpy as np
-from fairseq.checkpoint_utils import load_model_ensemble_and_task_from_hf_hub
-from fairseq.models.text_to_speech.hub_interface import TTSHubInterface
 import torch
 from tqdm import tqdm
 from transformers import T5ForConditionalGeneration, T5Tokenizer
@@ -53,15 +53,48 @@ def paraphrase_base(text: str, tokenizer: T5Tokenizer, model: T5ForConditionalGe
     return filtered_paraphrases
 
 
-def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[Tuple[np.ndarray, str]]:
-    models, cfg, task = load_model_ensemble_and_task_from_hf_hub(
-        "facebook/tts_transformer-ru-cv7_css10",
-        arg_overrides={"vocoder": "hifigan", "fp16": False}
-    )
-    speech_model = models[0]
-    TTSHubInterface.update_cfg_with_data_cfg(cfg, task.data_cfg)
-    generator = task.build_generator(models, cfg)
+def generate_sound(text: str, voice: str) -> np.ndarray:
+    sound_fname = ''
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.wav', delete=False) as fp:
+            sound_fname = fp.name
+        cmd = f'echo "{text}" | RHVoice-client -s {voice}+CLB > "{sound_fname}"'
+        retcode = subprocess.run(cmd, shell=True, encoding='utf-8').returncode
+        err_msg = f'The text "{text}" cannot be synthesized into ' \
+                  f'the file "{sound_fname}" with RHVoice\'s voice "{voice}"!'
+        if retcode != 0:
+            raise ValueError(err_msg)
+        if not os.path.isfile(sound_fname):
+            raise ValueError(err_msg)
+        new_sound, rate = librosa.load(sound_fname)
+        if len(new_sound.shape) > 1:
+            new_sound = librosa.to_mono(new_sound)
+        if rate != TARGET_SAMPLE_RATE:
+            new_sound = librosa.resample(new_sound, orig_sr=rate, target_sr=TARGET_SAMPLE_RATE,
+                                         res_type='kaiser_best', scale=True)
+        new_sound = np.round(new_sound * 32767.0)
+        err_msg += ' The synthetic sound is wrong!'
+        if np.max(np.abs(new_sound)) > 32768.0:
+            raise ValueError(err_msg)
+        if np.min(new_sound) >= 0:
+            raise ValueError(err_msg)
+        if new_sound.shape[0] <= (TARGET_SAMPLE_RATE // 4):
+            err_msg += f' It is too short! Expected greater than {TARGET_SAMPLE_RATE // 4}, got {new_sound.shape[0]}.'
+            raise ValueError(err_msg)
+        new_sound[new_sound > 32767] = 32767
+        new_sound = new_sound.astype(np.int16)
+    finally:
+        if os.path.isfile(sound_fname):
+            os.remove(sound_fname)
+    return new_sound
 
+
+def generate_sounds_using_different_voices(text: str) -> List[np.ndarray]:
+    voices = ['Anna', 'Elena', 'Irina', 'Aleksandr', 'Artemiy']
+    return [generate_sound(text, cur_voice) for cur_voice in voices]
+
+
+def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[Tuple[np.ndarray, str]]:
     if variants_of_paraphrasing > 0:
         paraphraser = T5ForConditionalGeneration.from_pretrained(MODEL_NAME)
         tokenizer = T5Tokenizer.from_pretrained(MODEL_NAME)
@@ -75,28 +108,9 @@ def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[T
 
     all_sounds_and_transcriptions = []
     for sound_idx, cur_text in enumerate(tqdm(texts)):
-        with warnings.catch_warnings():
-            sample = TTSHubInterface.get_model_input(task, cur_text)
-            wav, rate = TTSHubInterface.get_prediction(task, speech_model, generator, sample)
-        new_sound = wav.numpy()
-        if len(new_sound.shape) > 1:
-            new_sound = librosa.to_mono(new_sound)
-        if rate != TARGET_SAMPLE_RATE:
-            new_sound = librosa.resample(new_sound, orig_sr=rate, target_sr=TARGET_SAMPLE_RATE,
-                                         res_type='kaiser_best', scale=True)
-        new_sound = np.round(new_sound * 32767.0)
-        err_msg = f'The synthetic sound {sound_idx} for the text "{cur_text}" is wrong!'
-        if np.max(np.abs(new_sound)) > 32768.0:
-            raise ValueError(err_msg)
-        if np.min(new_sound) >= 0:
-            raise ValueError(err_msg)
-        if new_sound.shape[0] <= (TARGET_SAMPLE_RATE // 4):
-            err_msg += f' It is too short! Expected greater than {TARGET_SAMPLE_RATE // 4}, got {new_sound.shape[0]}.'
-            raise ValueError(err_msg)
-        new_sound[new_sound > 32767] = 32767
-        new_sound = new_sound.astype(np.int16)
-        all_sounds_and_transcriptions.append((new_sound, cur_text))
-        del sample, wav, new_sound
+        synthetic_sounds = generate_sounds_using_different_voices(cur_text)
+        for new_sound in synthetic_sounds:
+            all_sounds_and_transcriptions.append((new_sound, cur_text))
 
         if variants_of_paraphrasing > 0:
             paraphrases = paraphrase_base(text=cur_text, tokenizer=tokenizer, model=paraphraser,
@@ -104,18 +118,8 @@ def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[T
             if len(paraphrases) > variants_of_paraphrasing:
                 paraphrases = paraphrases[:variants_of_paraphrasing]
             for cur_paraphrase in paraphrases:
-                with warnings.catch_warnings():
-                    sample = TTSHubInterface.get_model_input(task, cur_paraphrase)
-                    wav, rate = TTSHubInterface.get_prediction(task, speech_model, generator, sample)
-                new_sound = wav.numpy()
-                if len(new_sound.shape) > 1:
-                    new_sound = librosa.to_mono(new_sound)
-                if rate != TARGET_SAMPLE_RATE:
-                    new_sound = librosa.resample(new_sound, orig_sr=rate, target_sr=TARGET_SAMPLE_RATE,
-                                                 res_type='kaiser_best', scale=True)
-                new_sound = np.round(new_sound * 32767.0)
-                new_sound[new_sound > 32767] = 32767
-                new_sound = new_sound.astype(np.int16)
-                all_sounds_and_transcriptions.append((new_sound, cur_paraphrase))
+                synthetic_sounds = generate_sounds_using_different_voices(cur_paraphrase)
+                for new_sound in synthetic_sounds:
+                    all_sounds_and_transcriptions.append((new_sound, cur_paraphrase))
 
     return all_sounds_and_transcriptions

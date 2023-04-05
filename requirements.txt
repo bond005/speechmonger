@@ -2,9 +2,9 @@ datasets==2.10.1
 fairseq==0.12.2
 ffmpeg-python==0.2.0
 huggingface-hub==0.13.3
-librosa==0.10.0
 numpy==1.23.5
 resampy==0.4.2
+rhvoice-wrapper==0.7.1
 scipy==1.10.0
 sentencepiece==0.1.95
 tqdm==4.65.0
