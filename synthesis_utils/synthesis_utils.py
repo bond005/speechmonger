@@ -1,4 +1,5 @@
 import os.path
+import re
 import subprocess
 import tempfile
 from typing import List, Tuple, Union
@@ -17,6 +18,7 @@ MODEL_NAME = 'cointegrated/rut5-base-paraphraser'
 
 def paraphrase_base(text: str, tokenizer: T5Tokenizer, model: T5ForConditionalGeneration,
                     beams: int = 30, grams: int = 4, variants: int = 10) -> List[str]:
+    re_for_digit = re.compile(r'\d+')
     x = tokenizer([text for _ in range(variants)],
                   return_tensors='pt', padding=True).to(model.device)
     max_size = int(x.input_ids.shape[1] * 1.5 + 10)
@@ -47,7 +49,7 @@ def paraphrase_base(text: str, tokenizer: T5Tokenizer, model: T5ForConditionalGe
                 )
             )
         ))
-        if k not in normalized_paraphrases:
+        if (k not in normalized_paraphrases) and (re_for_digit.search(k) is None):
             normalized_paraphrases.add(k)
             filtered_paraphrases.append(v)
     return filtered_paraphrases
@@ -89,9 +91,16 @@ def generate_sound(text: str, voice: str) -> np.ndarray:
     return new_sound
 
 
-def generate_sounds_using_different_voices(text: str) -> List[np.ndarray]:
+def generate_sounds_using_different_voices(text: str) -> List[Union[np.ndarray, str]]:
     voices = ['Anna', 'Elena', 'Irina', 'Aleksandr', 'Artemiy']
-    return [generate_sound(text, cur_voice) for cur_voice in voices]
+    sounds = []
+    for cur_voice in voices:
+        try:
+            new_sound = generate_sound(text, cur_voice)
+        except BaseException as ex:
+            new_sound = str(ex)
+        sounds.append(new_sound)
+    return sounds
 
 
 def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[Tuple[np.ndarray, str]]:
@@ -114,7 +123,7 @@ def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[T
 
         if variants_of_paraphrasing > 0:
             paraphrases = paraphrase_base(text=cur_text, tokenizer=tokenizer, model=paraphraser,
-                                          variants=variants_of_paraphrasing + 2)
+                                          variants=variants_of_paraphrasing * 2 + 1)
             if len(paraphrases) > variants_of_paraphrasing:
                 paraphrases = paraphrases[:variants_of_paraphrasing]
             for cur_paraphrase in paraphrases:

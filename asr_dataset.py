@@ -63,9 +63,22 @@ def main():
         raise
     info_msg = f'There are {len(speech_corpus)} samples in the created speech corpus.'
     asr_dataset_logger.info(info_msg)
+    filtered_speech_corpus = []
+    n_errors = 0
+    for sound, annotation in speech_corpus:
+        if isinstance(sound, str):
+            n_errors += 1
+            asr_dataset_logger.warning(sound)
+        else:
+            filtered_speech_corpus.append((sound, annotation))
+    del speech_corpus
+    info_msg = f'There are {len(filtered_speech_corpus)} samples after filtering.'
+    if n_errors > 0:
+        info_msg += f' There are {n_errors} errors.'
+    asr_dataset_logger.info(info_msg)
 
     try:
-        save_speech_corpus(dataset_path, speech_corpus)
+        save_speech_corpus(dataset_path, filtered_speech_corpus)
     except BaseException as ex:
         err_msg = str(ex)
         asr_dataset_logger.error(err_msg)
