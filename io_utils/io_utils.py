@@ -50,7 +50,7 @@ def save_sound(fname: str, sound: np.ndarray):
         fp.writeframes(sound.tobytes())
 
 
-def save_speech_corpus(speech_corpus_dir: str, speech_corpus_data: List[Tuple[np.ndarray, str]]):
+def save_speech_corpus(speech_corpus_dir: str, speech_corpus_data: List[Tuple[np.ndarray, str, str]]):
     if not os.path.isdir(speech_corpus_dir):
         raise ValueError(f'The directory "{speech_corpus_dir}" does not exist!')
     metadata_fname = os.path.join(speech_corpus_dir, 'metadata.csv')
@@ -60,8 +60,8 @@ def save_speech_corpus(speech_corpus_dir: str, speech_corpus_data: List[Tuple[np
     os.mkdir(data_dir)
     with codecs.open(metadata_fname, mode='w', encoding='utf-8') as fp:
         data_writer = csv.writer(fp, delimiter=',', quotechar='"')
-        data_writer.writerow(['file_name', 'transcription'])
-        for counter, (speech, text) in enumerate(speech_corpus_data):
+        data_writer.writerow(['file_name', 'transcription', 'normalized'])
+        for counter, (speech, text, norm) in enumerate(speech_corpus_data):
             speech_path = 'data/sound{0:>04}.wav'.format(counter + 1)
-            data_writer.writerow([speech_path, text])
+            data_writer.writerow([speech_path, text, norm])
             save_sound(fname=os.path.join(speech_corpus_dir, os.path.normpath(speech_path)), sound=speech)

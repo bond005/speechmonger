@@ -5,6 +5,7 @@ import sys
 
 from io_utils.io_utils import load_text_corpus, save_speech_corpus
 from synthesis_utils.synthesis_utils import create_sounds
+from normalization_utils.normalization_utils import normalize_text
 
 
 asr_dataset_logger = logging.getLogger(__name__)
@@ -70,7 +71,15 @@ def main():
             n_errors += 1
             asr_dataset_logger.warning(sound)
         else:
-            filtered_speech_corpus.append((sound, annotation))
+            try:
+                normalized_annotation = normalize_text(annotation)
+            except BaseException as ex:
+                normalized_annotation = ''
+                asr_dataset_logger.warning(f'The text "{annotation}" cannot be normalized! {str(ex)}')
+            if len(normalized_annotation) > 0:
+                filtered_speech_corpus.append((sound, annotation, normalized_annotation))
+            else:
+                n_errors += 1
     del speech_corpus
     info_msg = f'There are {len(filtered_speech_corpus)} samples after filtering.'
     if n_errors > 0:
