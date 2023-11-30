@@ -1,8 +1,11 @@
 import random
 import re
+from typing import List
 
 from nltk import wordpunct_tokenize
 from transliterate import translit
+
+from normalization_utils.russian import normalize_russian
 
 
 SPECIAL_WORDS = {
@@ -102,7 +105,7 @@ SPECIAL_WORDS = {
 }
 
 
-def apply_transliteration(source_word: str) -> str:
+def apply_transliteration(source_word: str, source_text: str) -> str:
     if len(source_word.strip()) == 0:
         return ''
     re_for_russian = re.compile(r'^[абвгдеёжзийклмнопрстуфхцчшщъыьэюя]+$')
@@ -111,10 +114,10 @@ def apply_transliteration(source_word: str) -> str:
         return source_word
     if re_for_english.search(source_word.lower()) is None:
         if source_word.isalnum():
-            raise ValueError(f'The word {source_word} is inadmissible!')
-        subwords = list(filter(lambda it: it.isalnum(), wordpunct_tokenize(source_word)))
+            raise ValueError(f'The word {source_word} in the text "{source_text}" is inadmissible!')
+        subwords = list(filter(lambda it: it.isalnum(), tokenize_by_words(source_word)))
         if len(subwords) != 0:
-            raise ValueError(f'The word {source_word} is inadmissible!')
+            raise ValueError(f'The word {source_word} in the text "{source_text}" is inadmissible!')
         return source_word
     lowered_source_word = source_word.lower()
     if lowered_source_word in SPECIAL_WORDS:
@@ -128,19 +131,47 @@ def apply_transliteration(source_word: str) -> str:
     return res
 
 
-def normalize_text(s: str) -> str:
+def tokenize_by_words(s: str) -> List[str]:
+    re_for_digit = re.compile(r'\d+')
+    old_words = wordpunct_tokenize(s)
+    new_words = []
+    for w in old_words:
+        search_res = re_for_digit.search(w)
+        if search_res is None:
+            new_words.append(w)
+        else:
+            w1 = w[:search_res.start()].strip()
+            w2 = w[search_res.start():search_res.end()].strip()
+            w3 = w[search_res.end():].strip()
+            if len(w1) > 0:
+                new_words.append(w1)
+            new_words.append(w2)
+            search_res = re_for_digit.search(w3)
+            while search_res is not None:
+                w1 = w3[:search_res.start()].strip()
+                w2 = w3[search_res.start():search_res.end()].strip()
+                w3 = w3[search_res.end():].strip()
+                if len(w1) > 0:
+                    new_words.append(w1)
+                new_words.append(w2)
+                search_res = re_for_digit.search(w3)
+    return new_words
+
+
+def normalize_text(src: str) -> str:
     re_for_english = re.compile(r'[abcdefghijklmnopqrstuvwxyz]+')
     re_for_digit = re.compile(r'\d+')
+    s_ = normalize_russian(' '.join(tokenize_by_words(src)))
     words = list(filter(
         lambda it2: it2.isalnum(),
-        map(lambda it1: it1.strip().lower(), wordpunct_tokenize(s))
+        map(lambda it1: it1.strip().lower(), tokenize_by_words(s_))
     ))
     if len(words) == 0:
         return ''
     normalized_words = []
     for cur in words:
         if re_for_digit.search(cur) is not None:
-            err_msg = f'Text "{s}" is wrong, because it contains some digits!'
+            err_msg = f'Text "{src}" (after normalization: "{s_}") is wrong, because it contains some digits!'
             raise ValueError(err_msg)
         search_res = re_for_english.search(cur)
         if search_res is None:
@@ -155,7 +186,7 @@ def normalize_text(s: str) -> str:
                     new_word = cur[0:start_pos]
                 else:
                     new_word = ''
-                new_word += apply_transliteration(cur[start_pos:end_pos])
+                new_word += apply_transliteration(cur[start_pos:end_pos], s_)
                 old_word = cur[end_pos:]
                 search_res = re_for_english.search(old_word)
                 while search_res is not None:
@@ -165,10 +196,10 @@ def normalize_text(s: str) -> str:
                         break
                     if start_pos > 0:
                         new_word += old_word[0:start_pos]
-                    new_word += apply_transliteration(old_word[start_pos:end_pos])
+                    new_word += apply_transliteration(old_word[start_pos:end_pos], s_)
                     old_word = old_word[end_pos:]
                     search_res = re_for_english.search(old_word)
                 if len(old_word) > 0:
                     new_word += old_word
                 normalized_words.append(new_word)
-    return ' '.join(normalized_words).replace('ё', 'е')
+    return ' '.join(normalized_words).replace('ё', 'е').replace('. . .', '...')

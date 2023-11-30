@@ -1,4 +1,3 @@
-import gc
 import os.path
 import re
 import subprocess
@@ -12,7 +11,7 @@ import torch
 from tqdm import tqdm
 from transformers import T5ForConditionalGeneration, T5Tokenizer
 
-from normalization_utils.normalization_utils import apply_transliteration
+from normalization_utils.normalization_utils import apply_transliteration, normalize_text
 
 
 TARGET_SAMPLE_RATE: int = 16_000
@@ -132,7 +131,7 @@ def generate_sound(text: str, voice: str) -> np.ndarray:
     try:
         with tempfile.NamedTemporaryFile(mode='w', suffix='.wav', delete=False) as fp:
             sound_fname = fp.name
-        text_for_synthesis = text.replace('"', '').replace("'", '')
+        text_for_synthesis = normalize_text(text.replace('"', '').replace("'", ''))
         transliterated_text_for_synthesis = ''
         search_res = re_for_word.search(text_for_synthesis)
         if search_res is None:
@@ -143,7 +142,7 @@ def generate_sound(text: str, voice: str) -> np.ndarray:
             transliterated_text_for_synthesis = text_for_synthesis[0:start_pos]
         transliterated_text_for_synthesis += generate_pronouncing_exclusion(
             voice_abbreviation(
-                apply_transliteration(text_for_synthesis[start_pos:end_pos])
+                apply_transliteration(text_for_synthesis[start_pos:end_pos], text_for_synthesis)
             )
         )
         text_for_synthesis = text_for_synthesis[end_pos:]
@@ -157,7 +156,7 @@ def generate_sound(text: str, voice: str) -> np.ndarray:
                 transliterated_text_for_synthesis += text_for_synthesis[0:start_pos]
             transliterated_text_for_synthesis += generate_pronouncing_exclusion(
                 voice_abbreviation(
-                    apply_transliteration(text_for_synthesis[start_pos:end_pos])
+                    apply_transliteration(text_for_synthesis[start_pos:end_pos], text_for_synthesis)
                 )
             )
             text_for_synthesis = text_for_synthesis[end_pos:]
@@ -194,7 +193,7 @@ def generate_sound(text: str, voice: str) -> np.ndarray:
     return new_sound
 
 
-def generate_sounds_using_different_voices(text: str) -> List[Union[np.ndarray, str]]:
+def generate_sounds_using_different_voices(text: str) -> List[Tuple[Union[np.ndarray, str], str]]:
     voices = ['Anna', 'Elena', 'Irina', 'Aleksandr', 'Artemiy']
     sounds = []
     for cur_voice in voices:
@@ -202,7 +201,7 @@ def generate_sounds_using_different_voices(text: str) -> List[Union[np.ndarray, 
             new_sound = generate_sound(text, cur_voice)
         except BaseException as ex:
             new_sound = str(ex)
-        sounds.append(new_sound)
+        sounds.append((new_sound, cur_voice))
     return sounds
 
 
@@ -218,11 +217,10 @@ def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[T
         paraphraser = None
         tokenizer = None
 
-    all_sounds_and_transcriptions = []
     for sound_idx, cur_text in enumerate(tqdm(texts)):
         synthetic_sounds = generate_sounds_using_different_voices(cur_text)
-        for new_sound in synthetic_sounds:
-            all_sounds_and_transcriptions.append((new_sound, cur_text))
+        for new_sound, voice in synthetic_sounds:
+            yield new_sound, cur_text, voice
 
         if variants_of_paraphrasing > 0:
             paraphrases = paraphrase_base(text=cur_text, tokenizer=tokenizer, model=paraphraser,
@@ -231,9 +229,5 @@ def create_sounds(texts: List[str], variants_of_paraphrasing: int = 0) -> List[T
                 paraphrases = paraphrases[:variants_of_paraphrasing]
             for cur_paraphrase in paraphrases:
                 synthetic_sounds = generate_sounds_using_different_voices(cur_paraphrase)
-                for new_sound in synthetic_sounds:
-                    all_sounds_and_transcriptions.append((new_sound, cur_paraphrase))
-
-        gc.collect()
-
-    return all_sounds_and_transcriptions
+                for new_sound, voice in synthetic_sounds:
+                    yield new_sound, cur_paraphrase, voice
