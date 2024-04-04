@@ -1,10 +1,14 @@
+import csv
 from argparse import ArgumentParser
+import codecs
 import logging
 import os
+import shutil
 import sys
 
-from io_utils.io_utils import load_text_corpus, save_speech_corpus
+from io_utils.io_utils import load_text_corpus, save_sound
 from synthesis_utils.synthesis_utils import create_sounds
+from normalization_utils.normalization_utils import normalize_text
 
 
 asr_dataset_logger = logging.getLogger(__name__)
@@ -55,21 +59,40 @@ def main():
         asr_dataset_logger.error(err_msg)
         raise IOError(err_msg)
 
-    try:
-        speech_corpus = create_sounds(texts=text_corpus, variants_of_paraphrasing=number_of_paraphrases)
-    except BaseException as ex:
-        err_msg = str(ex)
-        asr_dataset_logger.error(err_msg)
-        raise
-    info_msg = f'There are {len(speech_corpus)} samples in the created speech corpus.'
+    n_errors = 0
+    counter = 1
+    metadata_fname = os.path.join(dataset_path, 'metadata.csv')
+    data_dir = os.path.join(dataset_path, 'data')
+    if os.path.isdir(data_dir):
+        shutil.rmtree(data_dir)
+    os.mkdir(data_dir)
+    with codecs.open(metadata_fname, mode='w', encoding='utf-8') as fp:
+        csv_writer = csv.writer(fp, delimiter=',', quotechar='"')
+        csv_writer.writerow(['file_name', 'transcription', 'normalized', 'speaker'])
+        try:
+            for signal, annotation, voice in create_sounds(text_corpus, number_of_paraphrases):
+                if isinstance(signal, str):
+                    n_errors += 1
+                    asr_dataset_logger.warning(signal)
+                else:
+                    try:
+                        normalized_annotation = normalize_text(annotation)
+                    except BaseException as ex:
+                        normalized_annotation = ''
+                        asr_dataset_logger.warning(f'The text "{annotation}" cannot be normalized! {str(ex)}')
+                    if len(normalized_annotation) > 0:
+                        speech_path = 'data/sound{0:>04}.wav'.format(counter)
+                        csv_writer.writerow([speech_path, annotation, normalized_annotation, voice])
+                        save_sound(fname=os.path.join(dataset_path, os.path.normpath(speech_path)), sound=signal)
+                        counter += 1
+                    else:
+                        n_errors += 1
+        except BaseException as ex:
+            err_msg = str(ex)
+            asr_dataset_logger.error(err_msg)
+            raise
+    info_msg = f'{counter - 1} samples are prepared for the speech corpus, and {n_errors} samples cannot be processed.'
     asr_dataset_logger.info(info_msg)
-
-    try:
-        save_speech_corpus(dataset_path, speech_corpus)
-    except BaseException as ex:
-        err_msg = str(ex)
-        asr_dataset_logger.error(err_msg)
-        raise
 
 
 if __name__ == '__main__':
